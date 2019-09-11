@@ -36,30 +36,6 @@ GLFWwindow* openGLWindow(void) {
     return win;
 }
 
-void createColors(GLfloat buffer[], GLfloat g_vertex_buffer_data[], int len) {
-    for (int v = 0; v < len; v+=3) {
-        buffer[v + 0] = (g_vertex_buffer_data[v + 0] + 1.0f) / 4.0;
-        buffer[v + 1] = (g_vertex_buffer_data[v + 1] + 1.0f) / 4.0;
-        buffer[v + 2] = (g_vertex_buffer_data[v + 2] + 1.0f) / 4.0;
-        //printf("%4d: %4.3f %4.3f %4.3f\n", v, buffer[v + 0], buffer[v + 1], buffer[v + 2]);
-    }
-}
-
-void changeColors(GLfloat buffer[], int len) {
-    for (int v = 0; v < len; v+=3) {
-        buffer[v + 0] = (buffer[v + 0] + 0.005f);
-        buffer[v + 1] = (buffer[v + 1] + 0.005f);
-        buffer[v + 2] = (buffer[v + 2] + 0.005f);
-        if (buffer[v + 0] > 1.0f)
-            buffer[v + 0] = 0.0f;
-        if (buffer[v + 1] > 1.0f)
-            buffer[v + 1] = 0.0f;
-        if (buffer[v + 2] > 1.0f)
-            buffer[v + 2] = 0.0f;
-        //printf("%4d: %4.3f %4.3f %4.3f\n", v, buffer[v + 0], buffer[v + 1], buffer[v + 2]);
-    }
-}
-
 int main(void) {
     // Initialise GLFW
     if (!glfwInit()) {
@@ -82,7 +58,7 @@ int main(void) {
     glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
 
     // background color
-    glClearColor(0.1f, 0.1f, 0.1f, 0.0f);
+    glClearColor(0.0f, 0.4f, 0.4f, 0.0f);
 
     cout << "Opened a window\n";
     GLuint VertexArrayID;
@@ -99,7 +75,7 @@ int main(void) {
     GLuint MatrixID = glGetUniformLocation(programID, "MVP");
 
     // Projection matrix : 45° Field of View, 16:9 ratio, display range : 0.1 unit <-> 100 units
-    glm::mat4 Projection = glm::perspective(glm::radians(45.0f), 16.0f / 9.0f, 0.1f, 100.0f);
+    glm::mat4 Projection = glm::perspective(glm::radians(65.0f), 16.0f / 9.0f, 0.1f, 100.0f);
 
     // Camera matrix
     glm::mat4 View = glm::lookAt(glm::vec3(4,3.5,3.5), // Camera is at (4,3,3), in World Space
@@ -110,6 +86,10 @@ int main(void) {
     glm::mat4 Model = glm::mat4(1.0f);
     // Our ModelViewProjection
     glm::mat4 MVP1   = Projection * View * Model;
+
+    // For the triangle
+    glm::mat4 Model2 = glm::translate(glm::mat4(1.0f), glm::vec3(-3.0f, 2.0f, 1.0f));;
+    glm::mat4 MVP2   = Projection * View * Model2;
 
     // A cube. Three consecutive floats give a 3D vertex; Three consecutive vertices give a triangle.
     // A cube has 6 faces with 2 triangles each, so this makes 6*2=12 triangles, and 12*3 vertices
@@ -156,9 +136,23 @@ int main(void) {
     glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer);
     glBufferData(GL_ARRAY_BUFFER, sizeof(g_vertex_buffer_data), g_vertex_buffer_data, GL_STATIC_DRAW);
 
-#define VERTX_ARR_LEN 12*3*3
-    static GLfloat g_color_buffer_data[VERTX_ARR_LEN];
-    createColors((GLfloat*)g_color_buffer_data, (GLfloat*)g_vertex_buffer_data, VERTX_ARR_LEN);
+    // A triangle
+    static const GLfloat g_vertex_buffer_data2[] = {
+        -1.0f, -1.0f, 0.0f,
+         1.0f, -1.0f, 0.0f,
+         0.0f,  1.0f, 0.0f,
+    };
+    GLuint vertexbuffer2;
+    glGenBuffers(1, &vertexbuffer2);
+    glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer2);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(g_vertex_buffer_data2), g_vertex_buffer_data2, GL_STATIC_DRAW);
+
+    static GLfloat g_color_buffer_data[12*3*3];
+    for (int v = 0; v < 12*3 ; v++){
+        g_color_buffer_data[3*v+0] = (g_vertex_buffer_data[3*v+0]+1.0f)/2.0;
+        g_color_buffer_data[3*v+1] = (g_vertex_buffer_data[3*v+1]+1.0f)/2.0;
+        g_color_buffer_data[3*v+2] = (g_vertex_buffer_data[3*v+2]+1.0f)/2.0;
+    }
 
     GLuint colorbuffer;
     glGenBuffers(1, &colorbuffer);
@@ -190,10 +184,13 @@ int main(void) {
         // Draw the cube
         glDrawArrays(GL_TRIANGLES, 0, 12*3); // 12*3 indices, start at 0 (will create on triangle)
 
-        // Change colors for the next iteration
-        changeColors((GLfloat*)g_color_buffer_data, sizeof(g_color_buffer_data));
-        glBindBuffer(GL_ARRAY_BUFFER, colorbuffer);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(g_color_buffer_data), g_color_buffer_data, GL_STATIC_DRAW);
+        // Now bind buffer2 and send new MVP2
+        glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP2[0][0]);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer2);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+        // Draw the triangle
+        glDrawArrays(GL_TRIANGLES, 0, 3); // 3 indices, start at 0 (will create on triangle)
 
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);

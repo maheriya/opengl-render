@@ -82,7 +82,7 @@ int main(void) {
     glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
 
     // background color
-    glClearColor(0.1f, 0.1f, 0.1f, 0.0f);
+    glClearColor(0.0f, 0.4f, 0.4f, 0.0f);
 
     cout << "Opened a window\n";
     GLuint VertexArrayID;
@@ -99,7 +99,7 @@ int main(void) {
     GLuint MatrixID = glGetUniformLocation(programID, "MVP");
 
     // Projection matrix : 45° Field of View, 16:9 ratio, display range : 0.1 unit <-> 100 units
-    glm::mat4 Projection = glm::perspective(glm::radians(45.0f), 16.0f / 9.0f, 0.1f, 100.0f);
+    glm::mat4 Projection = glm::perspective(glm::radians(65.0f), 16.0f / 9.0f, 0.1f, 100.0f);
 
     // Camera matrix
     glm::mat4 View = glm::lookAt(glm::vec3(4,3.5,3.5), // Camera is at (4,3,3), in World Space
