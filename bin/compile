@@ -1,0 +1,65 @@
+#!/bin/csh -f
+alias chkst 'if ($status != 0) then \
+  echo "Failure!"; \
+  exit(1); \
+endif'
+
+set pkg = "opengl-render"
+set ver = "0.1.0"
+
+@ debug = 0
+if ($#argv == 1) then
+  if ($argv[1] == "debug") then
+    echo "Creating a Debug build"
+    @ debug = 1
+  endif
+endif
+
+##foreach shader ( `ls ../shaders/*` )
+##  ln -s $shader .
+##end
+ln -s ../shaders/SimpleTransform.vertexshader .
+ln -s ../shaders/SingleColor.fragmentshader .
+
+
+##--## Hack for compiling on Jetson TX1 with new opencv (after JetPack 3.0)
+##--set archi=`uname -i`
+##--if ( x"$archi" == x"aarch64" ) then
+##--  set extraopts = ( -DCUDA_USE_STATIC_CUDA_RUNTIME=OFF )
+##--else
+set extraopts = ( -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-10.0 -DCUDA_HOST_COMPILER=/usr/local/cuda-10.0/bin/nvcc )
+##--endif
+
+#goto MAKE
+if ($debug) then
+  set cmd = ( cmake -DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_INSTALL_PREFIX=/usr/local "$extraopts" ../src )
+  set strip = ( --strip=no )
+else
+  set cmd = ( cmake -DCMAKE_BUILD_TYPE=RELEASE -DCMAKE_INSTALL_PREFIX=/usr/local "$extraopts" ../src )
+  set strip = ( --strip=yes )
+endif
+
+echo $cmd
+$cmd
+chkst
+
+MAKE:
+make -j8 #VERBOSE=1
+chkst
+echo "===> NOT installed. Use local build of ${pkg} for execution"
+exit
+
+INSTALL:
+set found = `dpkg --get-selections ${pkg} |& grep install`
+if (x"$found" != x) sudo dpkg -r ${pkg}
+ 
+#        --fstrans=yes \
+
+sudo checkinstall --nodoc $strip --backup=no \
+        --default \
+        --pkgname=${pkg} \
+        --pkgversion=${ver}
+
+chkst
+
+sudo ldconfig
