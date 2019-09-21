@@ -15,13 +15,6 @@ if ($#argv == 1) then
   endif
 endif
 
-##foreach shader ( `ls ../shaders/*` )
-##  ln -s $shader .
-##end
-ln -s ../shaders/SimpleTransform.vertexshader .
-ln -s ../shaders/SingleColor.fragmentshader .
-
-
 ##--## Hack for compiling on Jetson TX1 with new opencv (after JetPack 3.0)
 ##--set archi=`uname -i`
 ##--if ( x"$archi" == x"aarch64" ) then
