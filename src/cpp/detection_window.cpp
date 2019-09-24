@@ -10,18 +10,20 @@
 #include "detection_window.hpp"
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/opengl.hpp>
-#include "shader.hpp"
+//#include "shader.hpp"
 #include "texture.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
 using namespace std;
-#define SHOW_IMAGE     1
-#define SHOW_BBOX      1
-#define SHOW_TEXT      1
+#define SHOW_IMAGE       1
+#define SHOW_BBOX        1
+#define SHOW_TEXT        1
+#define NUM_BOX_VERTICES 4
 
 #define checkError() _checkError(__FILE__, __LINE__)
+
 
 inline int DetectionWindow::_checkError(char *file, int line) {
     GLenum error_code = glGetError();
@@ -41,20 +43,25 @@ static void glfw_error_callback(int error, const char* desc) {
 static void glfw_key_callback(GLFWwindow *window, int key, int scancode, int action, int mods) {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, GL_TRUE);
-        DetectionWindow::done = true;
     }
 
 }
 
-bool DetectionWindow::done = false;
+// glfw: whenever the window size changed (by OS or user resize) this callback function executes
+// ---------------------------------------------------------------------------------------------
+static void glfw_fb_size_callback(GLFWwindow* window, int width, int height) {
+    // make sure the viewport matches the new window dimensions; note that width and
+    // height will be significantly larger than specified on retina displays.
+    glViewport(0, 0, width, height);
+}
 
 int DetectionWindow::initializeGLFW(void) {
     if (glfwInit() == GL_FALSE)
         return GL_FALSE;
 
     glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // 4.2 works too
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, 1);
     glfwSetErrorCallback(glfw_error_callback);
@@ -67,7 +74,6 @@ int DetectionWindow::createWindow(int width, int height, string winname) {
         printf("Failed to initialize GLFW\n");
         return GL_FALSE;
     }
-
     GLFWmonitor *primary = glfwGetPrimaryMonitor();
     const GLFWvidmode *mode = glfwGetVideoMode(primary);
     mScreenWidth = mode->width;
@@ -77,6 +83,7 @@ int DetectionWindow::createWindow(int width, int height, string winname) {
     mHeight = (height <= mScreenHeight) ? height : mScreenHeight;
 
     mWindow = glfwCreateWindow(mWidth, mHeight, winname.c_str(), NULL, NULL);
+    printf("Window size (created): %dx%d\n", mWidth, mHeight);
     if (mWindow == NULL) {
         glfwTerminate();
         printf("Failed to create window");
@@ -85,6 +92,8 @@ int DetectionWindow::createWindow(int width, int height, string winname) {
 
     glfwMakeContextCurrent(mWindow);
     glfwSetKeyCallback(mWindow, glfw_key_callback);
+    glfwSetFramebufferSizeCallback(mWindow, glfw_fb_size_callback);
+
 
     glewExperimental = GL_TRUE; // *Needed* for core profile
     if (glewInit() != GLEW_OK) {
@@ -92,14 +101,21 @@ int DetectionWindow::createWindow(int width, int height, string winname) {
         printf("%s\n", "glewInit() failed");
         return GL_FALSE;
     }
+
+    // Define the viewport dimensions
+    glViewport(0, 0, mWidth, mHeight);
+
     // glewInit() may cause an OpenGL error; we just want to clear the error. Ignore error.
-    GLenum error_code;
-    if ((error_code = glGetError()) != GL_NO_ERROR) {
-        if (error_code != GL_INVALID_ENUM)
-            printf("OpenGL Error: %d (line %d)\n", error_code, __LINE__);
+    GLenum error_code = glGetError();
+    if ((error_code != GL_NO_ERROR) && (error_code != GL_INVALID_ENUM)) {
+        printf("OpenGL Error: %d (line %d)\n", error_code, __LINE__);
     }
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    glDisable(GL_DEPTH_TEST); // Ignore z values enforce ordered drawing
+    glDepthFunc(GL_NEVER);
+    // Enable transparency (for box lines, text, e.g.)
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glClearColor(0.2f, 0.2f, 0.2f , 0.2f);
 
     return initBuffers();
 }
@@ -109,7 +125,6 @@ int DetectionWindow::initBuffers(void) {
         printf("Window is not created yet!\n");
         return GL_FALSE;
     }
-    mVAO = createVertexArray();
 #if SHOW_IMAGE
     if (initImageBuffers() == GL_FALSE) {
         glfwTerminate();
@@ -131,30 +146,11 @@ int DetectionWindow::initBuffers(void) {
     }
 #endif
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    // Enable transparency (for box lines, e.g.)
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_BLEND);
+    return GL_TRUE;
 }
 
 int DetectionWindow::initImageBuffers(void) {
-    // Canvas for image (two triangles)
-    const GLshort mVertices[] = {
-                   -1, 1, 0,
-                    1, 1, 0,
-                   -1,-1, 0,
-                    1,-1, 0 };
-
-    // UV coordinates for the two triangles on canvas
-    const GLshort mUVs[] = {
-                    0, 0,
-                    1, 0,
-                    0, 1,
-                    1, 1 };
-
-    mVertexBuffer = createVertexBuffer(mVertices, sizeof(mVertices));
-    mUVBuffer = createVertexBuffer(mUVs, sizeof(mUVs));
-
+    mImageVAO = createVertexArray();
     GLint ret = createImageShaders(&mImageShaderProgram);
     if (ret == GL_FALSE) {
         cleanup();
@@ -162,19 +158,30 @@ int DetectionWindow::initImageBuffers(void) {
         return GL_FALSE;
     }
 
-    glGenTextures(1, &mImageTexID);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, mImageTexID);
+    // Canvas for image (triangles strip to make a quad)
+    const GLshort mVertices[] = {
+             // position   texture coords (note inverted v as OpenCV images are scanned up to down)
+             //     x  y   u  v
+                   -1, 1,  0, 0,
+                    1, 1,  1, 0,
+                   -1,-1,  0, 1,
+                    1,-1,  1, 1};
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    mImageVertexBuffer = createVertexBuffer(mVertices, sizeof(mVertices));
+    glBindBuffer(GL_ARRAY_BUFFER, mImageVertexBuffer);
+    glEnableVertexAttribArray(0);
+    //                 index​, size​,     type​, normalized​, stride​, *offset​
+    glVertexAttribPointer(0,     4, GL_SHORT,   GL_FALSE,      0,    NULL);
+
+    // cleanup
+    unBindBuffers();
 
     return checkError();
 }
 
 int DetectionWindow::initBBoxBuffers(void) {
+
     GLint ret = createBBoxShaders(&mBBoxShaderProgram);
     if (ret == GL_FALSE) {
         cleanup();
@@ -182,74 +189,68 @@ int DetectionWindow::initBBoxBuffers(void) {
         return GL_FALSE;
     }
     // Get a handle for BBox color uniform
-    mBBoxColorLOC = glGetUniformLocation(mBBoxShaderProgram, "BBCOLOR");
+    mBBoxUniColor = glGetUniformLocation(mBBoxShaderProgram, "BBCOLOR");
     glLineWidth(mLineWidth);
+
+    mBBoxVAO = createVertexArray();
+    mBBoxVertexBuffer = createVertexBuffer(NULL, sizeof(GLfloat) * NUM_BOX_VERTICES * 2, false);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);
+
+    // cleanup
+    unBindBuffers();
 
     return checkError();
 }
 
 int DetectionWindow::initTextBuffers(void) {
-    // Initialize text with the Holstein font
-    mTextTextID = loadDDS("../data/Holstein.DDS");
-
-    // Initialize VBO
-    glGenBuffers(1, &mTextVertexBuffer);
-    glGenBuffers(1, &mTextUVBuffer);
-
     // Initialize Shader
-    //mTextShaderProgram = LoadShaders("../shaders/TextVertexShader.vertexshader", "../shaders/TextVertexShader.fragmentshader");
     GLint ret = createTextShaders(&mTextShaderProgram);
     if (ret == GL_FALSE) {
         cleanup();
-        printf("Image shader compilation failed\n");
+        printf("Text shader compilation failed\n");
         return GL_FALSE;
     }
 
 
     // Initialize uniforms' IDs
     mTextUniTexSampler = glGetUniformLocation(mTextShaderProgram, "texSampler");
+    mTextUniTextColor = glGetUniformLocation(mTextShaderProgram, "textColor");
+
+    // Orthographic projection (for text). Set up to allow specifying coordinates in screen pixels units
+    glm::mat4 projection = glm::ortho(0.0f, (float)mWidth, 0.0f, (float)mHeight);
+    //glm::mat4 projection = glm::ortho(0.0f, 1.0f, 0.0f, 1.0f); // 0..1 x, 1..0 y. OpenCV convention
+    GLuint textUniProjection = glGetUniformLocation(mTextShaderProgram, "projection");
+
+    glUseProgram(mTextShaderProgram);
+    glUniformMatrix4fv(textUniProjection, 1, GL_FALSE, glm::value_ptr(projection));
 
     if (loadFonts() == GL_FALSE)
         return GL_FALSE;
 
+    mTextVAO = createVertexArray();
+    mTextVertexBuffer = createVertexBuffer(NULL, sizeof(GLfloat) * NUM_BOX_VERTICES * 4, false);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, NULL);
+
+    // cleanup
+    unBindBuffers();
+
     return checkError();
 }
 
-int DetectionWindow::display(const unsigned char* img, GLuint format) {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_BLEND);
-    glBindVertexArray(mVAO);
-
-#if SHOW_TEXT
-    showText();
-#endif
-#if SHOW_IMAGE
-    showImage(img, format);
-#endif
-#if SHOW_BBOX
-    showBBox();
-#endif
-
-    glfwSwapBuffers(mWindow);
-    glfwPollEvents();
-    glfwSetWindowTitle(mWindow, "New OpenGL Window");
-}
-
-
 int DetectionWindow::display(cv::cuda::GpuMat& img) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_BLEND);
-    glBindVertexArray(mVAO);
 
-#if SHOW_TEXT
-    showText();
-#endif
 #if SHOW_IMAGE
     showImage(img);
 #endif
 #if SHOW_BBOX
     showBBox();
 #endif
+#if SHOW_TEXT
+    showText();
+#endif
 
     glfwSwapBuffers(mWindow);
     glfwPollEvents();
@@ -257,98 +258,64 @@ int DetectionWindow::display(cv::cuda::GpuMat& img) {
 }
 
 
-int DetectionWindow::showImage(const unsigned char* img, GLuint format) {
-    glUseProgram(mImageShaderProgram);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
-    glEnableVertexAttribArray(0);
-    //                 index​, size​,     type​, normalized​, stride​, *offset​
-    glVertexAttribPointer(0,     3, GL_SHORT,   GL_FALSE,      0,    NULL);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mUVBuffer);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_FALSE, 0, NULL);
-
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, mImageTexID);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    if (format == GL_BGRA)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, mWidth, mHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, img);
-    else if (format == GL_RGBA)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, mWidth, mHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
-    else if (format == GL_BGR)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, mWidth, mHeight, 0, GL_BGR, GL_UNSIGNED_BYTE, img);
-    else {
-        printf("Unsupported format %" PRIu16 "\n", format);
-        return GL_FALSE;
-    }
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    return checkError();
-}
-
 int DetectionWindow::showImage(cv::cuda::GpuMat& img) {
+    glBindVertexArray(mImageVAO);
     glUseProgram(mImageShaderProgram);
 
-    glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
+    glBindBuffer(GL_ARRAY_BUFFER, mImageVertexBuffer);
     glEnableVertexAttribArray(0);
     //                 index​, size​,     type​, normalized​, stride​, *offset​
-    glVertexAttribPointer(0,     3, GL_SHORT,   GL_FALSE,      0,    NULL);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mUVBuffer);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_UNSIGNED_SHORT, GL_FALSE, 0, NULL);
-
+    glVertexAttribPointer(0,     4, GL_SHORT,   GL_FALSE,      0,    NULL);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, mImageTexID);
     cv::ogl::Texture2D tex(img);
     tex.bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
+    //glDisableVertexAttribArray(0);
+
+    // Cleanup
+    unBindBuffers();
 
     return GL_TRUE;
 }
 
 int DetectionWindow::showBBox(void) {
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(mBBoxVAO);
     glUseProgram(mBBoxShaderProgram);
+
     for (auto& det: detections) {
-        glUniform3fv(mBBoxColorLOC, 1, det.color);
+        //glUniform3f(mBBoxUniColor, det.color.x, det.color.y, det.color.z);
+        glUniform3fv(mBBoxUniColor, 1, glm::value_ptr(det.color));
         // Create 2D bounding box
         const GLfloat bboxVertices[] = {
                         det.xmin, det.ymin,
                         det.xmax, det.ymin,
                         det.xmax, det.ymax,
                         det.xmin, det.ymax };
-        mBBoxVertexBuffer = createVertexBuffer(bboxVertices, sizeof(bboxVertices), false);
 
         glBindBuffer(GL_ARRAY_BUFFER, mBBoxVertexBuffer);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(bboxVertices), bboxVertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
         glDrawArrays(GL_LINE_LOOP, 0, 4);
-        glDisableVertexAttribArray(0);
     }
-    glDisable(GL_BLEND);
+
+    // Cleanup
+    unBindBuffers();
 
     return GL_TRUE;
 }
 
 // Render text
 int DetectionWindow::showText(void) {
-    glClearColor(0.0f, 0.7f, 0.7f , 0.0f);
-
-    char text[256];
     for (auto& det: detections) {
-        renderText2D(det.label.c_str(), det.xmin, det.ymin, 20.f/mHeight);
+        string label = det.label; // TODO: add det.score
+        renderTextTrueType(label, det.xmin, det.ymin, 0.35f, det.color);
     }
+
+    // Cleanup
+    unBindBuffers();
+
     return GL_TRUE;
 }
 
@@ -377,23 +344,24 @@ GLuint DetectionWindow::createVertexArray() {
 }
 
 void DetectionWindow::cleanup(void) {
-    glDeleteVertexArrays(1, &mVAO);
 #if SHOW_IMAGE
     // Image
-    glDeleteBuffers(1, &mVertexBuffer);
-    glDeleteBuffers(1, &mUVBuffer);
+    glDeleteVertexArrays(1, &mImageVAO);
+    glDeleteBuffers(1, &mImageVertexBuffer);
     glDeleteTextures(1, &mImageTexID);
     glDeleteProgram(mImageShaderProgram);
 #endif
 
 #if SHOW_BBOX
     // BBox
+    glDeleteVertexArrays(1, &mBBoxVAO);
     glDeleteBuffers(1, &mBBoxVertexBuffer);
     glDeleteProgram(mBBoxShaderProgram);
 #endif
 
 #if SHOW_TEXT
     // Text
+    glDeleteVertexArrays(1, &mTextVAO);
     glDeleteBuffers(1, &mTextVertexBuffer);
     glDeleteBuffers(1, &mTextUVBuffer);
     glDeleteTextures(1, &mTextTextID);
@@ -405,16 +373,15 @@ void DetectionWindow::cleanup(void) {
 }
 
 int DetectionWindow::createImageShaders(GLuint* shader_program_id) {
-    const GLchar* vs_source = R"(#version 440
+    const GLchar* vs_source = R"(#version 330
 
-layout(location = 0) in vec3 vertexPosition;
-layout(location = 1) in vec2 vertexUV;
+layout(location = 0) in vec4 vertex;
 
 out vec2 texUV;
 
 void main() {
-  gl_Position = vec4(vertexPosition, 1.0f);
-  texUV = vertexUV;
+  gl_Position = vec4(vertex.xy, 0.0f, 1.0f);
+  texUV = vertex.zw;
 }
 )";
     const GLchar* fs_source = R"(#version 440
@@ -461,7 +428,7 @@ void main() {
 
 int DetectionWindow::createBBoxShaders(GLuint* shader_program_id) {
     // This shader takes xmin,ymin,xmax,ymax format box input, and converts into OpenGL convention
-    const GLchar* vs_source = R"(#version 440 core
+    const GLchar* vs_source = R"(#version 330 core
 
 layout(location = 0) in vec3 vertexPosition;
 
@@ -516,39 +483,32 @@ void main() {
 }
 
 int DetectionWindow::createTextShaders(GLuint* shader_program_id) {
-    // This shader takes xmin,ymin,xmax,ymax format vertex input, and converts into OpenGL convention
-    // Maps [0..1][0..1] OpenCV coordinates (x left to right, y top to down) to
-    // [-1..1][-1..1] OpenGL coordinates with x left to right and y down to up (inverted)
-    const GLchar* vs_source = R"(#version 440 core
+    // Shaders for TrueType fonts rendering
+    const GLchar* vs_source = R"(#version 330 core
 
-layout(location = 0) in vec2 position_opencv;
-layout(location = 1) in vec2 vertexUV;
-
+layout (location = 0) in vec4 vertex; // <vec2 pos, vec2 tex>
 out vec2 UV;
 
-void main(){
-    vec2 position_opengl;
-    position_opengl = 2.0 * position_opencv - 1.0f; // [0..1] -> [-1..1]
-    position_opengl.y *= -1.0; // invert y
+uniform mat4 projection;
 
-    gl_Position =  vec4(position_opengl,0,1);
-    UV = vertexUV;
+void main() {
+    gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);
+    UV = vertex.zw;
 }
 )";
+
     const GLchar* fs_source = R"(#version 440 core
 
 in vec2 UV;
 out vec4 color;
 
 uniform sampler2D texSampler;
+uniform vec3      textColor;
 
-void main(){
-    vec4 _color = vec4(1.0f, 0.8f, 0.2f, 1.0f);
-    //vec4 _color = vec4(0.8f, 0.0f, 0.0f, 1.0f);
-
-    color = texture( texSampler, UV );
-    color = _color * color;
-    
+void main()
+{    
+    vec4 sampled = vec4(1.0, 1.0, 1.0, texture(texSampler, UV).r);
+    color = vec4(textColor, 0.8) * sampled;
 }
 )";
 
@@ -584,86 +544,88 @@ void main(){
     return GL_TRUE;
 }
 
-int DetectionWindow::renderText2D(const char * text, GLfloat x, GLfloat y, GLfloat size) {
+// render text
+// params
+// _x: bottom-left x position for text. [0..1] == [left..right]
+// _y: bottom-left y position for text. [0..1] == [top..bottom]
+void DetectionWindow::renderTextTrueType(string text, GLfloat _x, GLfloat _y, GLfloat scale, glm::vec3 color) {
 
-    unsigned int length = strlen(text);
-
-    // Fill buffers
-    std::vector<glm::vec2> vertices;
-    std::vector<glm::vec2> UVs;
-    for (unsigned int i = 0; i < length; i++) {
-
-        // x low to high is left to right, ; y low to high is up to down [OpenCV convention input]
-        glm::vec2 vertex_down_left  = glm::vec2( x+i*size     , y+size );
-        glm::vec2 vertex_down_right = glm::vec2( x+i*size+size, y+size );
-        glm::vec2 vertex_up_right   = glm::vec2( x+i*size+size, y      );
-        glm::vec2 vertex_up_left    = glm::vec2( x+i*size     , y      );
-
-//        // x low to high is left to right, ; y low to high is down to up [OpenGL convention input]
-//        glm::vec2 vertex_up_left    = glm::vec2( x+i*size     , y+size );
-//        glm::vec2 vertex_up_right   = glm::vec2( x+i*size+size, y+size );
-//        glm::vec2 vertex_down_right = glm::vec2( x+i*size+size, y      );
-//        glm::vec2 vertex_down_left  = glm::vec2( x+i*size     , y      );
-
-        vertices.push_back(vertex_up_left);
-        vertices.push_back(vertex_down_left);
-        vertices.push_back(vertex_up_right);
-
-        vertices.push_back(vertex_down_right);
-        vertices.push_back(vertex_up_right);
-        vertices.push_back(vertex_down_left);
-
-        char character = text[i];
-        float uv_x = (character%16)/16.0f;
-        float uv_y = (character/16)/16.0f;
-
-        glm::vec2 uv_up_left    = glm::vec2( uv_x           , uv_y );
-        glm::vec2 uv_up_right   = glm::vec2( uv_x+1.0f/16.0f, uv_y );
-        glm::vec2 uv_down_right = glm::vec2( uv_x+1.0f/16.0f, (uv_y + 1.0f/16.0f) );
-        glm::vec2 uv_down_left  = glm::vec2( uv_x           , (uv_y + 1.0f/16.0f) );
-        UVs.push_back(uv_up_left);
-        UVs.push_back(uv_down_left);
-        UVs.push_back(uv_up_right);
-
-        UVs.push_back(uv_down_right);
-        UVs.push_back(uv_up_right);
-        UVs.push_back(uv_down_left);
+#if SHOW_BBOX
+    // First render a solid box behind text
+    GLfloat tw = 10.0f; // total text width
+    for (auto ch: text)
+        tw += (mCharacters[ch].Advance >> 6);
+    tw *= (scale/mWidth); // fraction of screen width
+    GLfloat bx = _x;
+    GLfloat by;
+    GLfloat h = (mCharacters['X'].Size.y *1.7f) * scale / mHeight;
+    if (_y < 20.0f/mHeight) {
+        h *= -1.0f;
+        by = _y + 1.0f/mHeight;
+    } else {
+        by = _y - 1.0f/mHeight;
     }
-    glBindBuffer(GL_ARRAY_BUFFER, mTextVertexBuffer);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec2), &vertices[0], GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, mTextUVBuffer);
-    glBufferData(GL_ARRAY_BUFFER, UVs.size() * sizeof(glm::vec2), &UVs[0], GL_STATIC_DRAW);
+    GLfloat boxVertices[] = {
+        // triangle strip
+        bx,        by - h,
+        bx + tw,   by - h,
+        bx,        by,
+        bx + tw,   by
+    };
+    // We will use BBox shaders to draw a solid bg box for text
+    glBindVertexArray(mBBoxVAO);
+    glUseProgram(mBBoxShaderProgram);
+    glUniform3fv(mBBoxUniColor, 1, glm::value_ptr(color));
+    glBindBuffer(GL_ARRAY_BUFFER, mBBoxVertexBuffer);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(boxVertices), boxVertices);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, NUM_BOX_VERTICES);
+    glBindVertexArray(0);
+#endif
+#if 1
+    // Convert to pixel units and add margins
+    // y : [mHeight..0] == [top..bottom]
+    // x : [0..mWidth] == [left..right]
+    GLfloat y = mHeight-_y*mHeight + 6.0f;
+    if (y > (mHeight - 15))
+        y = (mHeight - 15);
+    GLfloat x = _x*mWidth + 1.0f;
 
-    // Bind shader
+    // Render text characters
+    glBindVertexArray(mTextVAO);
     glUseProgram(mTextShaderProgram);
-
-    // Bind texture
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, mTextTextID);
-    // Set our "myTextureSampler" sampler to use Texture Unit 0
-    glUniform1i(mTextUniTexSampler, 0);
+    glUniform3f(mTextUniTextColor, 1.0f - color.x, 1.0f - color.y, 1.0f - color.z);
+    string::const_iterator c;
+    for (auto c: text) {
+        Character ch = mCharacters[c];
 
-    // 1rst attribute buffer : vertices
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, mTextVertexBuffer);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void*)0 );
+        GLfloat xpos = x + ch.Bearing.x * scale;
+        GLfloat ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
 
-    // 2nd attribute buffer : UVs
-    glEnableVertexAttribArray(1);
-    glBindBuffer(GL_ARRAY_BUFFER, mTextUVBuffer);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, (void*)0 );
+        GLfloat w = ch.Size.x * scale;
+        GLfloat h = ch.Size.y * scale;
+        // Update VBO for each character
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // Draw call
-    glDrawArrays(GL_TRIANGLES, 0, vertices.size() );
-
-    glDisable(GL_BLEND);
-
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-    return checkError();
+        GLfloat vertices[NUM_BOX_VERTICES][4] = {
+            // triangle strip (4 vertices)
+            { xpos,     ypos + h,   0.0, 0.0 },
+            { xpos + w, ypos + h,   1.0, 0.0 },
+            { xpos,     ypos,       0.0, 1.0 },
+            { xpos + w, ypos,       1.0, 1.0 },
+        };
+        // Render glyph texture over quad
+        glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+        // Update content of VBO memory
+        glBindBuffer(GL_ARRAY_BUFFER, mTextVertexBuffer);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        // Render quad
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, NUM_BOX_VERTICES);
+        // Now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+        x += (ch.Advance >> 6) * scale; // Bit-shift by 6 to get value in pixels (2^6 = 64)
+    }
+#endif
 }
 
 int DetectionWindow::loadFonts(void) {
@@ -681,10 +643,43 @@ int DetectionWindow::loadFonts(void) {
     }
     FT_Set_Pixel_Sizes(face, 0, 48); // width decided by lib
 
-    // check that we can load font for 'X'
-    if (FT_Load_Char(face, 'X', FT_LOAD_RENDER))
-        cout << "ERROR::FREETYTPE: Failed to load Glyph" << endl;
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Disable byte-alignment restriction
 
-
+    for (GLubyte c = 0; c < 128; c++) {
+        // Load character glyph
+        if (FT_Load_Char(face, c, FT_LOAD_RENDER)) {
+            cout << "ERROR::FREETYTPE: Failed to load Glyph" << endl;
+            continue;
+        }
+        // Generate texture
+        GLuint texture;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D,
+                     0,
+                     GL_RED,
+                     face->glyph->bitmap.width,
+                     face->glyph->bitmap.rows,
+                     0,
+                     GL_RED,
+                     GL_UNSIGNED_BYTE,
+                     face->glyph->bitmap.buffer
+        );
+        // Set texture options
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        // Now store character for later use
+        Character character = {
+            texture,
+            glm::ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows),
+            glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
+            (GLuint)face->glyph->advance.x
+        };
+        mCharacters.insert(pair<GLchar, Character>(c, character));
+    }
+    FT_Done_Face(face);
+    FT_Done_FreeType(ft);
     return GL_TRUE;
 }

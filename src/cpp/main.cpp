@@ -8,7 +8,7 @@
 #include <opencv2/opencv.hpp>
 
 static int parse_opt(int, char*, struct argp_state*);
-#define DEBUG 1
+#define DEBUG 2
 
 using namespace std;
 
@@ -21,19 +21,23 @@ int main(int argc, char *argv[]) {
     int arg_count = 1;
     argp_parse(&argp, argc, argv, 0, 0, &arg_count);
 
-    cv::Mat img = cv::imread(argv[1], cv::IMREAD_UNCHANGED);
+    char* imgfile[120];
+    //strcpy(imgfile, (const char*)argv[1]);
+    cv::Mat img = cv::imread(argv[1], cv::IMREAD_COLOR); //cv::IMREAD_UNCHANGED); // use UNCHANGED for extracting alpha channel from png files
     if (img.empty()) {
         printf("OpenCV error: Could not open image %s\n", argv[1]);
         return -1;
     }
     GLint width = img.cols;
     GLint height = img.rows;
-
-    cv::cuda::GpuMat imgGPU;
-    imgGPU.upload(img);
 #if DEBUG>=1
+    printf("Image file: %s\n", argv[1]);
     printf("Image size: %dx%d\n", width, height);
     printf("Image channels: %d\n", img.channels());
+#endif
+    cv::cuda::GpuMat imgGPU;
+    imgGPU.upload(img);
+#if DEBUG>=2
     printf("    img step: %d, elemSize: %d\n", (int)img.step, (int)img.elemSize());
     printf("GPU img step: %d, elemSize: %d\n", (int)imgGPU.step, (int)imgGPU.elemSize());
 #endif
@@ -49,13 +53,13 @@ int main(int argc, char *argv[]) {
     // Create a fake detection results
     string label1 = "Object 1";
     Detection det1 = {(1.0f/width), (1.0f/height), 0.5f, 0.5f,
-                      {1.0f, 0.0f, 0.0f}, label1, 0.98f };
+                      glm::vec3(1.0f, 0.2f, 0.2f), label1, 0.98f };
     string label2 = "Object 2";
     Detection det2 = {0.5f, 0.5f, 1.0f-(1.0f/width), 1.0f-(1.f/height),
-                      {0.0f, 1.0f, 0.0f}, label2, 0.7f };
+                    glm::vec3(0.2f, 1.0f, 0.2f), label2, 0.7f };
     string label3 = "Object 3";
     Detection det3 = {0.15f, 0.25f, 0.85f, 0.75f,
-                      {0.0f, 0.0f, 1.0f}, label3, 0.54f };
+                    glm::vec3(0.2f, 0.2f, 1.0f), label3, 0.54f };
 
     detectionWin.addDetection(det1);
     detectionWin.addDetection(det2);
@@ -63,7 +67,6 @@ int main(int argc, char *argv[]) {
 
     while (!glfwWindowShouldClose(detectionWin.win())) {
         detectionWin.display(imgGPU);
-        //detectionWin.display(img.data, GL_BGRA);
     }
     detectionWin.cleanup();
 }

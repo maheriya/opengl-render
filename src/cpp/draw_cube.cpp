@@ -161,7 +161,7 @@ int main(void) {
 
     // Following two enable Z-buffer so that fragments that cannot be seen are not drawn
     glEnable(GL_DEPTH_TEST); // Enable depth test
-    glDepthFunc(GL_LESS);    // Accept fragment if it closer to the camera than the former one
+    glDepthFunc(GL_LESS);    // Accept fragment if it is closer to the camera than the former one
     do {
         // Clear the screen.
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

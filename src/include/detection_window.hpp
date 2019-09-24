@@ -8,49 +8,63 @@
 #ifndef __DETECTION_WINDOW_HPP_
 #define __DETECTION_WINDOW_HPP_
 #include <inttypes.h>
+#include <map>
+//#define GLEW_STATIC
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+// GL includes
+//#include "Shader.h"
 
 #include <string>
 #include <opencv2/opencv.hpp>
 
 using namespace std;
 
+struct Character {
+    GLuint     TextureID;  // ID handle of the glyph texture
+    glm::ivec2 Size;       // Size of glyph
+    glm::ivec2 Bearing;    // Offset from baseline to left/top of glyph
+    GLuint     Advance;    // Offset to advance to next glyph
+};
+
 struct Detection {
     float xmin;
     float ymin;
     float xmax;
     float ymax;
-    float color[3];
+    glm::vec3 color;
     string label;
     float score;
 };
 
 class DetectionWindow {
 public:
-    static bool done; // To indicate we are done via callbacks outside the class
 
     DetectionWindow(void) :
         mWidth(1280),
         mHeight(720),
         mScreenWidth(1280),
         mScreenHeight(720),
-        mVAO(-1),
         //
-        mVertexBuffer(-1),
-        mUVBuffer(-1),
+        mImageVAO(-1),
+        mImageVertexBuffer(-1),
         mImageTexID(-1),
         mImageShaderProgram(-1),
         //
         mLineWidth(2.6f),
-        mBBoxColorLOC(-1),
+        mBBoxVAO(-1),
+        mBBoxUniColor(-1),
         mBBoxVertexBuffer(-1),
         mBBoxShaderProgram(-1),
         //
-        //mTextColorLOC(-1),
+        mTextVAO(-1),
         mTextVertexBuffer(-1),
         mTextUVBuffer(-1),
+        mTextUniTexSampler(-1),
+        mTextUniTextColor(-1),
         mTextTextID(-1),
         mTextShaderProgram(-1),
         mWindow(NULL) { }
@@ -72,28 +86,30 @@ private:
     GLint mScreenWidth;
     GLint mScreenHeight;
 
-    GLuint mVAO;
     // Image setup
     GLFWwindow* mWindow;
-    GLuint mVertexBuffer;
-    GLuint mUVBuffer;
+    GLuint mImageVAO;
+    GLuint mImageVertexBuffer;
     GLuint mImageShaderProgram;
     GLuint mImageTexID;
 
     // Bounding box setup
     GLfloat mLineWidth;
-    GLuint mBBoxColorLOC;
+    GLuint mBBoxVAO;
+    GLuint mBBoxUniColor;
     GLuint mBBoxVertexBuffer;
     GLuint mBBoxShaderProgram;
     vector<Detection> detections;
 
     // Text setup (for labels)
+    GLuint mTextVAO;
     GLuint mTextTextID;
     GLuint mTextVertexBuffer;
     GLuint mTextUVBuffer;
     GLuint mTextShaderProgram;
     GLuint mTextUniTexSampler;
-
+    GLuint mTextUniTextColor;
+    map<GLchar, Character> mCharacters;
 
     int initializeGLFW(void);
     int initBuffers(void);
@@ -107,12 +123,19 @@ private:
     int createBBoxShaders(GLuint*);
     int createTextShaders(GLuint*);
 
-    int showImage(const unsigned char* img, GLuint format);
     int showImage(cv::cuda::GpuMat& img);
     int showBBox(void);
     int showText(void);
-    int renderText2D(const char * text, GLfloat x, GLfloat y, GLfloat size);
+
     int loadFonts(void);
+    void renderTextTrueType(string text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color);
+
+    inline void unBindBuffers(void) {
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindVertexArray(0);
+    }
+
 };
 
 #endif /* __DETECTION_WINDOW_HPP_ */

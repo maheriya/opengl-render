@@ -1,6 +1,6 @@
 #!/bin/csh -f
 rm -rf CMakeCache.txt CMakeFiles/ cmake_install.cmake Makefile 
-rm -f draw-cube-chcolor draw-texture draw-cube draw-text2D gl-render image-viewer movement
+rm -f alpha-blending draw-cube-chcolor draw-texture draw-cube draw-text2D gl-render image-viewer movement
 rm -rf description-pak install_manifest.txt
 rm -rf *.cmake >& /dev/null
 rm -rf *.deb >& /dev/null
