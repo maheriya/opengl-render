@@ -12,10 +12,11 @@ The main program (main.cpp, and detection_window.cpp) had my implementation of r
 ## Build
 cd to 'build' and run 
 
-`
+```
 cmake ../src
 make -j8
-`
+```
+
 ## Run
 ./gl-render <path-to-image>
 
