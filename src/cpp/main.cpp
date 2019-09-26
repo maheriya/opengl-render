@@ -60,12 +60,24 @@ int main(int argc, char *argv[]) {
     Detection det3 = {0.15f, 0.25f, 0.85f, 0.75f,
                     glm::vec3(0.2f, 0.2f, 1.0f), label3, 0.54f };
 
-    detectionWin.addDetection(det1);
-    detectionWin.addDetection(det2);
-    detectionWin.addDetection(det3);
 
+    int64 cnt = 0;
+    char str[100];
+    // simulate active detections
     while (!glfwWindowShouldClose(detectionWin.win())) {
+        cnt++;
+        if (cnt >= 100)
+            detectionWin.addDetection(det1);
+        if (cnt >= 200)
+            detectionWin.addDetection(det2);
+        if (cnt >= 300)
+            detectionWin.addDetection(det3);
+
         detectionWin.display(imgGPU);
+        sprintf(str, "Frame %ld" , cnt);
+
+        detectionWin.setTitle(str);
+
     }
     detectionWin.cleanup();
 }

@@ -10,8 +10,6 @@
 #include "detection_window.hpp"
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/opengl.hpp>
-//#include "shader.hpp"
-#include "texture.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -119,6 +117,11 @@ int DetectionWindow::createWindow(int width, int height, string winname) {
 
     return initBuffers();
 }
+
+void DetectionWindow::setTitle(char* title) {
+    glfwSetWindowTitle(mWindow, title);
+}
+
 
 int DetectionWindow::initBuffers(void) {
     if (mWindow == NULL) {
@@ -254,7 +257,7 @@ int DetectionWindow::display(cv::cuda::GpuMat& img) {
 
     glfwSwapBuffers(mWindow);
     glfwPollEvents();
-    glfwSetWindowTitle(mWindow, "New OpenGL Window");
+    delDetections();
 }
 
 
@@ -272,7 +275,6 @@ int DetectionWindow::showImage(cv::cuda::GpuMat& img) {
     cv::ogl::Texture2D tex(img);
     tex.bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    //glDisableVertexAttribArray(0);
 
     // Cleanup
     unBindBuffers();
@@ -319,11 +321,6 @@ int DetectionWindow::showText(void) {
     return GL_TRUE;
 }
 
-
-// Adds a detection to a list of detections. No visual processing is involved.
-void DetectionWindow::addDetection(Detection& det) {
-    detections.push_back(det);
-}
 
 GLuint DetectionWindow::createVertexBuffer(const void *vertex_buffer, GLuint vbsize, bool dstatic) {
     GLuint vbo = 0;

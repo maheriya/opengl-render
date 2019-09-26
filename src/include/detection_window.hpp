@@ -72,7 +72,16 @@ public:
     int createWindow(int width, int height, string winname="OpenGL Window");
     int display(const unsigned char* img, GLuint format);
     int display(cv::cuda::GpuMat& img);
-    void addDetection(Detection& det);
+    void setTitle(char* title);
+
+    // Adds a detection to a list of detections. No visual processing is involved.
+    inline void addDetection(Detection& det) {
+        detections.push_back(det);
+    }
+    inline void delDetections(void) {
+        detections.clear();
+        detections.shrink_to_fit();
+    }
 
     void cleanup(void);
 
